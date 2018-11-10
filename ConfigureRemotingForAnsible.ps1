@@ -52,32 +52,33 @@
 # Updated by David Norman <david@dkn.email>
 # Updated by Wojciech Sciesinski <wojciech[at]sciesinski[dot]net>
 #
-# Version 1.0  - 2014-07-06
-# Version 1.1  - 2014-11-11
-# Version 1.2  - 2015-05-15
-# Version 1.3  - 2016-04-04
-# Version 1.4  - 2017-01-05
-# Version 1.5  - 2017-02-09
-# Version 1.6  - 2017-04-18
-# Version 1.7  - 2017-11-23
-# Version 1.8  - 2018-02-23
-# Version 1.9  - 2018-09-21
-# Version 1.10 - 2018-11-03
+# Version 1.0 - 2014-07-06
+# Version 1.1 - 2014-11-11
+# Version 1.2 - 2015-05-15
+# Version 1.3 - 2016-04-04
+# Version 1.4 - 2017-01-05
+# Version 1.5 - 2017-02-09
+# Version 1.6 - 2017-04-18
+# Version 1.7 - 2017-11-23
+# Version 1.8 - 2018-02-23
+# Version 1.9 - 2018-09-21
+# Version 2.0 - 2018-11-03
 
 # Support -Verbose option
 [CmdletBinding()]
 
 Param (
     [string]$SubjectName = $env:COMPUTERNAME,
+    [switch]$CreateSelfSignedCert,
     [int]$CertValidityDays = 1095,
-    $CreateSelfSignedCert = $true,
     [switch]$ForceNewSSLCert,
     [switch]$UseExistingCert,
     [string]$RequiredIssuerCN,
-    [bool]$SkipNetworkProfileCheck,
+    [switch]$SkipNetworkProfileCheck,
     [switch]$GlobalHttpFirewallAccess,
-    [switch]$DisableBasicAuth = $false,
-    [switch]$EnableCredSSP
+    [switch]$DisableBasicAuth,
+    [switch]$EnableCredSSP,
+    [switch]$Force
 )
 
 Function Write-Log
@@ -260,13 +261,13 @@ Function Get-ExistingCert {
 
     ForEach ( $ExistingCert in $ExistingCerts )
     {
-        Write-Verbose "Checking the certificate: $($ExistingCert.Thumbprint)"
-
         # The certificate with the longest validity period will be prefered
         If ( $ExistsCorrectCert )
         {
             Break
         }
+
+        Write-Verbose "Checking the certificate: $($ExistingCert.Thumbprint)"
 
         # Check time-validity of a certificate
         If ( $ExistingCert.NotBefore -lt $Now -or $ExistingCert -gt $Now )
@@ -282,51 +283,66 @@ Function Get-ExistingCert {
 
                 If ( $ServerAuthenticationUsageFound )
                 {
-                    # Required SubjectName will be checked also in the AlternativeNames
-                    [String[]]$ExistingCertDNSNames = $($ExistingCert | select-Object -Property DnsNameList).dnsnamelist.unicode
-
-                    If ( $ExistingCertDNSNames -contains $SubjectName -or
-                        ($ExistingCertDNSNames -contains $SubjectNameFQDN -and
-                        $null -ne $SubjectNameFQDN) -or
-                        $ExistingCert.Subject -eq "CN=$SubjectName" -or
-                        ( $ExistingCert.Subject -eq "CN=$SubjectNameFQDN" -and
-                        $null -ne $SubjectNameFQDN) )
+                    If ( -not ([String]::IsNullOrEmpty($ExistingCert.Subject)) )
                     {
-                        If ( -not( [String]::IsNullOrEmpty($RequiredIssuerCN)) )
+                        # Required SubjectName will be checked also in the AlternativeNames
+                        [String[]]$ExistingCertDNSNames = $($ExistingCert | select-Object -Property DnsNameList).dnsnamelist.unicode
+
+                        If ( $ExistingCertDNSNames -contains $SubjectName -or
+                            ($ExistingCertDNSNames -contains $SubjectNameFQDN -and
+                            $null -ne $SubjectNameFQDN) -or
+                            $ExistingCert.Subject -eq "CN=$SubjectName" -or
+                            ( $ExistingCert.Subject -eq "CN=$SubjectNameFQDN" -and
+                            $null -ne $SubjectNameFQDN) )
                         {
-                            If ( $($ExistingCert.Issuer).contains(',') )
+                            If ( -not( [String]::IsNullOrEmpty($RequiredIssuerCN)) )
                             {
-                                $IssuerCN = $ExistingCert.issuer.Substring(0,$ExistingCert.issuer.IndexOf(','))
+                                If ( $($ExistingCert.Issuer).contains(',') )
+                                {
+                                    $IssuerCN = $ExistingCert.issuer.Substring(0,$ExistingCert.issuer.IndexOf(','))
+                                }
+                                Else
+                                {
+                                    $IssuerCN = $ExistingCert.issuer
+                                }
+
+                                # Replacement of double CN= because user can provide that in the parameter or not
+                                $RequiredIssuerCN = $("CN=$RequiredIssuerCN" -ireplace [regex]::Escape("CN=CN="), 'CN=')
+                                If ( $RequiredIssuerCN -eq $IssuerCN )
+                                {
+                                    $UseThumbprint = $ExistingCert.Thumbprint
+                                    $UseSubject = $($ExistingCert.Subject -ireplace [regex]::Escape("CN="), '')
+                                    $ExistsCorrectCert = $true
+                                }
+                                Else
+                                {
+                                    Write-Verbose "The certificate $($ExistingCert.Thumbprint) will not be used - an issuer doesn't match."
+                                }
                             }
                             Else
-                            {
-                                $IssuerCN = $ExistingCert.issuer
-                            }
-
-                            # Replacement of double CN= because user can provide that in the parameter or not
-                            $RequiredIssuerCN = $("CN=$RequiredIssuerCN" -ireplace [regex]::Escape("CN=CN="), 'CN=')
-                            If ( $RequiredIssuerCN -eq $IssuerCN )
                             {
                                 $UseThumbprint = $ExistingCert.Thumbprint
                                 $ExistsCorrectCert = $true
                             }
-                            else {
-                                Write-Verbose "The certificate $($ExistingCert.Thumbprint) will not be used - issuer doesn't match."
-                            }
                         }
                         Else
                         {
-                            $UseThumbprint = $ExistingCert.Thumbprint
-                            $ExistsCorrectCert = $true
+                            Write-Verbose "The certificate $($ExistingCert.Thumbprint) will not be used - name doesn't match."
                         }
                     }
-                    else {
-                        Write-Verbose "The certificate $($ExistingCert.Thumbprint) will not be used - name doesn't match."
+                    Else
+                    {
+                        Write-Verbose "The certificate $($ExistingCert.Thumbprint) will not be used - a null subject."
                     }
                 }
+                Else
+                {
+                    Write-Verbose "The certificate $($ExistingCert.Thumbprint) will not be used - lack of a x509v3 server authentication extention."
+                }
             }
-            Else {
-                Write-Verbose "The certificate $($ExistingCert.Thumbprint) will not be used - x509v3 extention validity."
+            Else
+            {
+                Write-Verbose "The certificate $($ExistingCert.Thumbprint) will not be used - lack of x509v3 extentions."
             }
         }
         Else
@@ -337,7 +353,7 @@ Function Get-ExistingCert {
 
     If ( $ExistsCorrectCert )
     {
-        $Result = New-Object -TypeName psobject -Property @{'Thumbprint' = $UseThumbprint}
+        $Result = New-Object -TypeName psobject -Property @{'Thumbprint' = $UseThumbprint; 'Subject' = $UseSubject}
     }
     Else
     {
@@ -364,7 +380,7 @@ Function Get-CertificateToUse {
 
         If ( $null -ne $ExistingCert.Thumbprint )
         {
-            $thumbprint = $ExistingCert.Thumbprint
+            $Certificate = New-Object -TypeName psobject -Property @{ 'Thumbprint' = $ExistingCert.Thumbprint; 'Subject' = $ExistingCert.Subject}
             Write-Verbose "Existing certificate will be used; thumbprint: $thumbprint"
             [bool]$GenerateSelfSignedCert = $false
         }
@@ -374,10 +390,11 @@ Function Get-CertificateToUse {
     {
         # We cannot use New-SelfSignedCertificate on 2012R2 and earlier
         $thumbprint = New-LegacySelfSignedCert -SubjectName $SubjectName -ValidDays $CertValidityDays
+        $Certificate = New-Object -TypeName psobject -Property @{ 'Thumbprint' = $thumbprint; 'Subject' = $SubjectName}
         Write-Verbose "Self-signed SSL certificate generated; thumbprint: $thumbprint"
     }
 
-    $thumbprint
+    $Certificate
 }
 
 # Setup error handling.
@@ -423,12 +440,16 @@ If ($PSVersionTable.PSVersion.Major -lt 3)
 
 # Find and start the WinRM service.
 Write-Verbose "Verifying WinRM service."
-If (-not (Get-Service "WinRM"))
+Try
 {
+    $WinRMService = Get-Service "WinRM"
+}
+Catch {
     Write-Log "Unable to find the WinRM service."
     Throw "Unable to find the WinRM service."
 }
-ElseIf ((Get-Service "WinRM").Status -ne "Running")
+
+If ($WinRMService.Status -ne "Running")
 {
     Write-Verbose "Setting WinRM service to start automatically on boot."
     Set-Service -Name "WinRM" -StartupType Automatic
@@ -477,9 +498,9 @@ If ($token_value -ne 1)
 
 # Make sure there is a SSL listener.
 $listeners = Get-ChildItem WSMan:\localhost\Listener
-If (-not ($listeners | Where-Object {$_.Keys -like "TRANSPORT=HTTPS"}))
+$httpslistener = $listeners | Where-Object {$_.Keys -like "TRANSPORT=HTTPS"}
+If (-not $httpslistener )
 {
-
     $certSelectParams = @{
         'SubjectName' = $SubjectName
         'CertValidityDays' = $CertValidityDays
@@ -487,12 +508,11 @@ If (-not ($listeners | Where-Object {$_.Keys -like "TRANSPORT=HTTPS"}))
         'RequiredIssuerCN' = $RequiredIssuerCN
     }
 
-    $thumbprint = Get-CertificateToUse @certSelectParams -Verbose:$([bool](Write-Verbose ([String]::Empty) 4>&1))
+    $Certificate = Get-CertificateToUse @certSelectParams -Verbose:$([bool](Write-Verbose ([String]::Empty) 4>&1))
 
-    # Create the hashtables of settings to be used.
     $valueset = @{
-        Hostname = $SubjectName
-        CertificateThumbprint = $thumbprint
+        Hostname = $Certificate.Subject
+        CertificateThumbprint = $Certificate.Thumbprint
     }
 
     $selectorset = @{
@@ -500,16 +520,16 @@ If (-not ($listeners | Where-Object {$_.Keys -like "TRANSPORT=HTTPS"}))
         Address = "*"
     }
 
-    Write-Verbose "Enabling SSL listener with the certificate identified by thumbprint: $thumbprint."
+    Write-Verbose "Enabling SSL listener with the certificate identified by thumbprint: $($Certificate.Thumbprint)."
     New-WSManInstance -ResourceURI 'winrm/config/Listener' -SelectorSet $selectorset -ValueSet $valueset | Out-Null
-    Write-Log "Enabled SSL listener with the certificate identified by thumbprint: $thumbprint."
+    Write-Log "Enabled SSL listener with the certificate identified by thumbprint: $($Certificate.Thumbprint)."
 }
 Else
 {
-    Write-Verbose "SSL listener is already active."
+    Write-Verbose "SSL listener already exists."
 
-    # Force a new SSL cert on Listener if the $ForceNewSSLCert
-    If ($ForceNewSSLCert)
+    # Force a recreate the new https listener
+    If ($Force)
     {
         $certSelectParams = @{
             'SubjectName' = $SubjectName
@@ -518,11 +538,11 @@ Else
             'RequiredIssuerCN' = $RequiredIssuerCN
         }
 
-        $thumbprint = Get-CertificateToUse @certSelectParams -Verbose:$([bool](Write-Verbose ([String]::Empty) 4>&1))
+        $Certificate = Get-CertificateToUse @certSelectParams -Verbose:$([bool](Write-Verbose ([String]::Empty) 4>&1))
 
         $valueset = @{
-            CertificateThumbprint = $thumbprint
-            Hostname = $SubjectName
+            Hostname = $Certificate.Subject
+            CertificateThumbprint = $Certificate.Thumbprint
         }
 
         # Delete the listener for SSL
@@ -532,10 +552,10 @@ Else
         }
         Remove-WSManInstance -ResourceURI 'winrm/config/Listener' -SelectorSet $selectorset
 
-        Write-Verbose "Recreating SSL listener with the certificate identified by thumbprint: $thumbprint."
+        Write-Verbose "Recreating SSL listener with the certificate identified by thumbprint: $($Certificate.Thumbprint)."
         # Add new Listener with new SSL cert
         New-WSManInstance -ResourceURI 'winrm/config/Listener' -SelectorSet $selectorset -ValueSet $valueset | Out-Null
-        Write-Log "Recreated SSL listener with the certificate identified by thumbprint: $thumbprint."
+        Write-Log "Recreated SSL listener with the certificate identified by thumbprint: $($Certificate.Thumbprint)."
     }
 }
 
