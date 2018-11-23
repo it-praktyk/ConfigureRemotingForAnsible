@@ -1,5 +1,6 @@
 # ConfigureRemotingforAnsible
 
+## Introduction
 An intention of the repository to maintain and extend the tool to configure WinRM listeners at Windows host managed by [Ansible](https://github.com/ansible/ansible).
 
 The ConfigureRemotingforAnsible tool was initially shared as an example via the [Ansible](https://github.com/ansible/ansible/examples/scripts/ConfigureRemotingForAnsible.ps1) repository, and I retained the history of changes of it under creating the current project.
@@ -7,5 +8,12 @@ The ConfigureRemotingforAnsible tool was initially shared as an example via the 
 When I extended that tool first time, I opened [the pull request](https://github.com/ansible/ansible/pull/48051) and discussed it under weekly Ansible-Windows group. Maintainers response [was not enthusiastic ;-)](https://meetbot.fedoraproject.org/ansible-windows/2018-11-06/ansible_windows_working_group.2018-11-06-20.00.log.html) so I decided to maintain the ConfigureRemotingforAnsible outside of the Ansible repository.
 
 I hope to find time to extend, improve, document this tool to be more admin-friendly and an enterprise-ready.
+
+## External documentation
+
+- Microsoft - [Installation and Configuration for Windows Remote Management](https://docs.microsoft.com/en-us/windows/desktop/winrm/installation-and-configuration-for-windows-remote-management).
+- Ansible - [Windows Remote Management](https://docs.ansible.com/ansible/2.5/user_guide/windows_winrm.htm)
+
+## Feedback and contributions
 
 All constructive feedback and contribution are welcomed.
